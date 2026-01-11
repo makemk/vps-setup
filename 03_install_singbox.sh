@@ -1,7 +1,7 @@
 #!/bin/bash
-echo -e "\033[32m---> [3/4] 安装 Sing-box (直装版 + 自动生成 Clash 订阅) \033[0m"
+echo -e "\033[32m---> [3/4] 安装 Sing-box (Base64 修复版) \033[0m"
 
-# 1. 自动判断架构
+# 1. 架构判断
 ARCH=$(uname -m)
 case $ARCH in
     x86_64) B_ARCH="amd64" ;;
@@ -9,114 +9,98 @@ case $ARCH in
     *) echo "不支持的架构: $ARCH"; exit 1 ;;
 esac
 
-# 2. 从 GitHub Release 下载稳定版
+# 2. 下载
 VERSION="1.10.7"
 URL="https://github.com/SagerNet/sing-box/releases/download/v${VERSION}/sing-box-${VERSION}-linux-${B_ARCH}.tar.gz"
+echo "正在下载 Sing-box v${VERSION}..."
+wget -q -O sing-box.tar.gz "$URL" || { echo "下载失败"; exit 1; }
 
-echo "正在从 GitHub 下载 Sing-box v${VERSION}..."
-wget -O sing-box.tar.gz "$URL"
-
-# 3. 解压并安装
-tar -zxvf sing-box.tar.gz
+# 3. 安装
+tar -zxvf sing-box.tar.gz > /dev/null
 cp sing-box-${VERSION}-linux-${B_ARCH}/sing-box /usr/local/bin/sing-box
 chmod +x /usr/local/bin/sing-box
 rm -rf sing-box.tar.gz sing-box-${VERSION}-linux-${B_ARCH}
 
-# 4. 写入系统服务
+# 4. 服务文件
 cat > /etc/systemd/system/sing-box.service <<EOF
 [Unit]
 Description=sing-box service
-Documentation=https://sing-box.sagernet.org
 After=network.target nss-lookup.target
-
 [Service]
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 ExecStart=/usr/local/bin/sing-box run -c /etc/sing-box/config.json
 Restart=on-failure
-RestartSec=10s
-LimitNOFILE=infinity
-
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# 5. 生成配置文件 (Gemini 分流)
+# 5. 配置文件 (Gemini 分流)
 mkdir -p /etc/sing-box
 cat > /etc/sing-box/config.json <<EOF
 {
-  "log": {
-    "level": "info",
-    "timestamp": true
-  },
-  "inbounds": [
-    {
-      "type": "mixed",
-      "tag": "mixed-in",
-      "listen": "::",
-      "listen_port": 5555
-    }
-  ],
+  "log": {"level": "info", "timestamp": true},
+  "inbounds": [{"type": "mixed","tag": "mixed-in","listen": "::","listen_port": 5555}],
   "outbounds": [
-    {
-      "type": "direct",
-      "tag": "direct"
-    },
-    {
-      "type": "socks",
-      "tag": "warp-socks",
-      "server": "127.0.0.1",
-      "server_port": 40000
-    }
+    {"type": "direct","tag": "direct"},
+    {"type": "socks","tag": "warp-socks","server": "127.0.0.1","server_port": 40000}
   ],
   "route": {
-    "rules": [
-      {
-        "geosite": ["gemini", "google", "openai"], 
-        "outbound": "warp-socks"
-      }
-    ],
+    "rules": [{"geosite": ["gemini", "google", "openai"], "outbound": "warp-socks"}],
     "final": "direct",
     "auto_detect_interface": true
   }
 }
 EOF
 
-# 6. 启动服务
+# 6. 启动
 systemctl daemon-reload
 systemctl enable sing-box
 systemctl restart sing-box
 
-# --- 🔥 新增功能：自动生成订阅链接 🔥 ---
+# --- 🔥 核心修复：Base64 订阅生成逻辑 🔥 ---
 
 if systemctl is-active --quiet sing-box; then
-    echo -e "\n✅ Sing-box 部署成功！正在计算订阅链接..."
+    echo -e "\n✅ 部署成功！正在生成订阅..."
     
-    # 获取公网 IP
+    # 1. 获取公网 IP
     PUBLIC_IP=$(curl -s --max-time 5 https://api.ipify.org)
     [ -z "$PUBLIC_IP" ] && PUBLIC_IP=$(curl -s --max-time 5 https://ifconfig.me)
 
-    # 构造节点名称和 SOCKS5 原生链接
-    NODE_NAME="Gemini_VPS"
+    # 2. 构造原始 SOCKS5 链接
     # 格式: socks5://IP:5555#名字
+    NODE_NAME="Gemini_VPS"
     RAW_LINK="socks5://${PUBLIC_IP}:5555#${NODE_NAME}"
     
-    # 进行简单的 URL 编码 (为了传给 API)
-    # 将 : / # 替换为 %xx
-    ENCODED_LINK=$(echo "$RAW_LINK" | sed 's/:/%3A/g; s/\//%2F/g; s/#/%23/g')
+    # 3. 进行 Base64 编码 (解决特殊字符导致 API 识别失败的问题)
+    # -w 0 防止换行
+    B64_LINK=$(echo -n "$RAW_LINK" | base64 -w 0)
 
-    # 构造 eooce 转换链接 (target=clash)
-    # 注意: 这里利用了 subconverter 支持 raw link 的特性
-    CLASH_SUB_URL="https://sublink.eooce.com/sub?target=clash&url=${ENCODED_LINK}&insert=false&config=https%3A%2F%2Fraw.githubusercontent.com%2FACL4SSR%2FACL4SSR%2Fmaster%2FClash%2Fconfig%2FACL4SSR_Online_Full.ini&emoji=true&list=false&tfo=false&scv=false&fdn=false&sort=false"
+    # 4. 对 Base64 字符串再进行 URL 编码 (处理 + / = 符号)
+    # 使用 python3 确保万无一失，如果没 python 用 sed 兜底
+    if command -v python3 >/dev/null 2>&1; then
+        ENCODED_B64=$(echo -n "$B64_LINK" | python3 -c "import sys, urllib.parse; print(urllib.parse.quote(sys.stdin.read()))")
+    else
+        ENCODED_B64=$(echo -n "$B64_LINK" | sed 's/+/%2B/g;s/\//%2F/g;s/=/%3D/g')
+    fi
+
+    # 5. 构造转换链接
+    CLASH_SUB_URL="https://sublink.eooce.com/sub?target=clash&url=${ENCODED_B64}&insert=false&emoji=true&list=false&tfo=false&scv=false&fdn=false&sort=false"
 
     echo -e "\n\033[33m=========================================================\033[0m"
-    echo -e "\033[33m   🚀 您的专属 Clash 订阅链接 (Generated for Xingcheng) \033[0m"
+    echo -e "\033[33m   🚀 您的 Clash 配置 (修复版) \033[0m"
     echo -e "\033[33m=========================================================\033[0m"
-    echo -e "\n\033[32m[方式 1] Clash 订阅链接 (直接复制到 Clash -> 导入 URL):\033[0m"
+    echo -e "\n\033[32m[方案 A] 自动订阅链接 (推荐):\033[0m"
+    echo -e "请复制下方链接 -> Clash -> 配置 -> 从 URL 下载"
     echo -e "\033[4;34m${CLASH_SUB_URL}\033[0m"
+    
     echo -e "\n---------------------------------------------------------"
-    echo -e "\033[32m[方式 2] 原始 SOCKS5 节点 (Clash Verge -> 导入粘贴板):\033[0m"
-    echo -e "${RAW_LINK}"
+    echo -e "\033[32m[方案 B] 手动配置 (如果方案A失败，请复制下方内容到 config.yaml):\033[0m"
+    echo -e "proxies:"
+    echo -e "  - name: ${NODE_NAME}"
+    echo -e "    type: socks5"
+    echo -e "    server: ${PUBLIC_IP}"
+    echo -e "    port: 5555"
+    echo -e "    skip-cert-verify: true"
+    echo -e "    udp: true"
     echo -e "\033[33m=========================================================\033[0m\n"
 
 else
