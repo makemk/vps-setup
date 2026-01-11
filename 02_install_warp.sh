@@ -1,18 +1,22 @@
 #!/bin/bash
-echo -e "\033[32m---> [2/4] 安装 WARP SOCKS5 代理 \033[0m"
+echo -e "\033[32m---> [2/4] 安装 WARP SOCKS5 代理 (进入交互模式) \033[0m"
 
-# 1. 自动安装 WARP (Wireproxy 模式)
-# 自动输入 "40000" 作为端口，"w" 选项代表 Wireproxy
-# 修改前 (旧的):
-# echo "40000" | bash <(curl -fsSL https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh) w
+echo "========================================================"
+echo "🚨 请注意：接下来的步骤需要您手动选择！"
+echo "1. 提示运行脚本时，输入 [1]"
+echo "2. 提示设置端口时，输入 [40000]"
+echo "3. 提示账户类型时，输入 [1] (免费账户)"
+echo "========================================================"
+sleep 3
 
-# 修改后 (新的): 注意加了 -e 和 1\n
-echo -e "1\n40000" | bash <(curl -fsSL https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh) w
+# --- 关键修改：去掉了 echo 管道，保留 w 参数直接运行 ---
+bash <(curl -fsSL https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh) w
 
 # 2. 简单的健康检查
+echo "正在检查端口..."
 sleep 3
 if netstat -nlp | grep -q 40000; then
-    echo "WARP 代理已成功运行在 127.0.0.1:40000"
+    echo "✅ WARP 代理已成功运行在 127.0.0.1:40000"
 else
-    echo "⚠️ 警告: 端口 40000 未检测到，请检查脚本输出。"
+    echo "⚠️ 警告: 端口 40000 未检测到，请确认您刚才是否正确输入了端口。"
 fi
