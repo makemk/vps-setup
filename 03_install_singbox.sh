@@ -1,7 +1,7 @@
 #!/bin/bash
-echo -e "\033[32m---> [3/4] 安装 Sing-box (直装版 + 打印原始 SOCKS5 链接) \033[0m"
+echo -e "\033[32m---> [3/4] 安装 Sing-box (含 HTTP 订阅生成服务) \033[0m"
 
-# 1. 架构判断
+# --- 1. 架构判断 & 下载 Sing-box ---
 ARCH=$(uname -m)
 case $ARCH in
     x86_64) B_ARCH="amd64" ;;
@@ -9,19 +9,18 @@ case $ARCH in
     *) echo "不支持的架构: $ARCH"; exit 1 ;;
 esac
 
-# 2. 下载 Sing-box (稳定版)
 VERSION="1.10.7"
 URL="https://github.com/SagerNet/sing-box/releases/download/v${VERSION}/sing-box-${VERSION}-linux-${B_ARCH}.tar.gz"
+
 echo "正在下载 Sing-box v${VERSION}..."
 wget -q -O sing-box.tar.gz "$URL" || { echo "下载失败"; exit 1; }
 
-# 3. 安装
 tar -zxvf sing-box.tar.gz > /dev/null
 cp sing-box-${VERSION}-linux-${B_ARCH}/sing-box /usr/local/bin/sing-box
 chmod +x /usr/local/bin/sing-box
 rm -rf sing-box.tar.gz sing-box-${VERSION}-linux-${B_ARCH}
 
-# 4. 注册服务
+# --- 2. 配置 Sing-box 服务 ---
 cat > /etc/systemd/system/sing-box.service <<EOF
 [Unit]
 Description=sing-box service
@@ -33,7 +32,7 @@ Restart=on-failure
 WantedBy=multi-user.target
 EOF
 
-# 5. 生成配置 (Mixed 端口 5555 -> WARP 40000)
+# --- 3. 配置 Sing-box 路由 (Gemini 分流) ---
 mkdir -p /etc/sing-box
 cat > /etc/sing-box/config.json <<EOF
 {
@@ -51,36 +50,71 @@ cat > /etc/sing-box/config.json <<EOF
 }
 EOF
 
-# 6. 启动服务
+# --- 4. 启动 Sing-box ---
 systemctl daemon-reload
 systemctl enable sing-box
 systemctl restart sing-box
 
-# --- 🔥 核心功能：打印原始链接供测试 🔥 ---
+# =========================================================
+# 🔥 核心功能：搭建 HTTP 订阅服务器 🔥
+# =========================================================
 
 if systemctl is-active --quiet sing-box; then
-    # 获取公网 IP
+    echo -e "\n✅ Sing-box 启动成功！正在构建 Web 订阅..."
+
+    # 1. 获取 IP
     PUBLIC_IP=$(curl -s --max-time 5 https://api.ipify.org)
     [ -z "$PUBLIC_IP" ] && PUBLIC_IP=$(curl -s --max-time 5 https://ifconfig.me)
 
-    # 构造原始 SOCKS5 链接
-    RAW_LINK="socks5://${PUBLIC_IP}:5555#Gemini_VPS"
+    # 2. 生成随机文件名 (模仿您给的例子 1yqRrFJ...)
+    # 生成 16 位随机字符，防止被别人扫描到
+    SUB_PATH=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 16)
+    WEB_ROOT="/var/www/sub"
+    mkdir -p "$WEB_ROOT"
+
+    # 3. 生成节点内容 (Base64 编码)
+    # 格式: socks5://IP:5555#Gemini_VPS
+    RAW_LINK="socks5://${PUBLIC_IP}:5555#Gemini_Unlock"
+    # 写入文件
+    echo -n "$RAW_LINK" | base64 -w 0 > "$WEB_ROOT/$SUB_PATH"
+
+    # 4. 创建 HTTP 服务 (使用 Python3)
+    # 监听 8080 端口，只服务 /var/www/sub 目录
+    cat > /etc/systemd/system/http-sub.service <<EOF
+[Unit]
+Description=Simple HTTP Subscription Server
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 -m http.server 8080 --directory $WEB_ROOT
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # 5. 启动 HTTP 服务
+    systemctl enable http-sub
+    systemctl restart http-sub
+
+    # 6. 临时放行 8080 端口 (确保能访问)
+    iptables -I INPUT -p tcp --dport 8080 -j ACCEPT
+    
+    # --- 输出最终链接 ---
+    SUB_URL="http://${PUBLIC_IP}:8080/${SUB_PATH}"
 
     echo -e "\n\033[33m=========================================================\033[0m"
-    echo -e "\033[33m   🔗 Sing-box 原始节点链接 \033[0m"
+    echo -e "\033[33m   🎉 您的专属订阅链接 (Web Direct Link) \033[0m"
     echo -e "\033[33m=========================================================\033[0m"
     
-    echo -e "\n\033[32m[1] 原始 SOCKS5 链接 (复制这个):\033[0m"
-    echo -e "\033[4;34m${RAW_LINK}\033[0m"
-
-    echo -e "\n\033[32m[2] 如何测试是否连通？\033[0m"
-    echo -e "请在您本地电脑的终端 (cmd/powershell/terminal) 运行下面这行命令："
-    echo -e "\033[36mcurl -v -x socks5://${PUBLIC_IP}:5555 https://www.google.com\033[0m"
+    echo -e "\n\033[32m[可以直接浏览器访问，或填入转换器]:\033[0m"
+    echo -e "\033[4;34m${SUB_URL}\033[0m"
     
-    echo -e "\n\033[32m[3] 如果能看到 '200 OK' 或 HTML 代码，说明节点是通的！\033[0m"
-    echo -e "确认通了之后，再去把上面的链接拿去转换，或者手动填入 Clash。"
+    echo -e "\n\033[36m提示：这是一个标准的 Base64 订阅文件。\033[0m"
+    echo -e "\033[36m您可以将此链接放入 'Clash 订阅转换' 网站，即可生成订阅！\033[0m"
     echo -e "\033[33m=========================================================\033[0m\n"
 
 else
-    echo "❌ 启动失败，请运行 systemctl status sing-box 查看原因。"
+    echo "❌ Sing-box 启动失败，无法生成订阅。"
 fi
