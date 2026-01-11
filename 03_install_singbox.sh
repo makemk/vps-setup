@@ -1,5 +1,5 @@
 #!/bin/bash
-echo -e "\033[32m---> [3/4] 安装 Sing-box (Base64 修复版) \033[0m"
+echo -e "\033[32m---> [3/4] 安装 Sing-box (直装版 + 本地生成 Clash 配置) \033[0m"
 
 # 1. 架构判断
 ARCH=$(uname -m)
@@ -9,7 +9,7 @@ case $ARCH in
     *) echo "不支持的架构: $ARCH"; exit 1 ;;
 esac
 
-# 2. 下载
+# 2. 下载 Sing-box
 VERSION="1.10.7"
 URL="https://github.com/SagerNet/sing-box/releases/download/v${VERSION}/sing-box-${VERSION}-linux-${B_ARCH}.tar.gz"
 echo "正在下载 Sing-box v${VERSION}..."
@@ -21,7 +21,7 @@ cp sing-box-${VERSION}-linux-${B_ARCH}/sing-box /usr/local/bin/sing-box
 chmod +x /usr/local/bin/sing-box
 rm -rf sing-box.tar.gz sing-box-${VERSION}-linux-${B_ARCH}
 
-# 4. 服务文件
+# 4. 注册服务
 cat > /etc/systemd/system/sing-box.service <<EOF
 [Unit]
 Description=sing-box service
@@ -33,7 +33,7 @@ Restart=on-failure
 WantedBy=multi-user.target
 EOF
 
-# 5. 配置文件 (Gemini 分流)
+# 5. 生成 Sing-box 配置 (VPS 端)
 mkdir -p /etc/sing-box
 cat > /etc/sing-box/config.json <<EOF
 {
@@ -51,58 +51,64 @@ cat > /etc/sing-box/config.json <<EOF
 }
 EOF
 
-# 6. 启动
+# 6. 启动服务
 systemctl daemon-reload
 systemctl enable sing-box
 systemctl restart sing-box
 
-# --- 🔥 核心修复：Base64 订阅生成逻辑 🔥 ---
+# --- 🔥 核心功能：直接生成 Clash YAML 🔥 ---
 
 if systemctl is-active --quiet sing-box; then
-    echo -e "\n✅ 部署成功！正在生成订阅..."
-    
-    # 1. 获取公网 IP
+    # 获取公网 IP
     PUBLIC_IP=$(curl -s --max-time 5 https://api.ipify.org)
     [ -z "$PUBLIC_IP" ] && PUBLIC_IP=$(curl -s --max-time 5 https://ifconfig.me)
 
-    # 2. 构造原始 SOCKS5 链接
-    # 格式: socks5://IP:5555#名字
-    NODE_NAME="Gemini_VPS"
-    RAW_LINK="socks5://${PUBLIC_IP}:5555#${NODE_NAME}"
-    
-    # 3. 进行 Base64 编码 (解决特殊字符导致 API 识别失败的问题)
-    # -w 0 防止换行
-    B64_LINK=$(echo -n "$RAW_LINK" | base64 -w 0)
-
-    # 4. 对 Base64 字符串再进行 URL 编码 (处理 + / = 符号)
-    # 使用 python3 确保万无一失，如果没 python 用 sed 兜底
-    if command -v python3 >/dev/null 2>&1; then
-        ENCODED_B64=$(echo -n "$B64_LINK" | python3 -c "import sys, urllib.parse; print(urllib.parse.quote(sys.stdin.read()))")
-    else
-        ENCODED_B64=$(echo -n "$B64_LINK" | sed 's/+/%2B/g;s/\//%2F/g;s/=/%3D/g')
-    fi
-
-    # 5. 构造转换链接
-    CLASH_SUB_URL="https://sublink.eooce.com/sub?target=clash&url=${ENCODED_B64}&insert=false&emoji=true&list=false&tfo=false&scv=false&fdn=false&sort=false"
-
     echo -e "\n\033[33m=========================================================\033[0m"
-    echo -e "\033[33m   🚀 您的 Clash 配置 (修复版) \033[0m"
+    echo -e "\033[33m   🚀 部署成功！请手动复制下方配置 (100% 可用) \033[0m"
     echo -e "\033[33m=========================================================\033[0m"
-    echo -e "\n\033[32m[方案 A] 自动订阅链接 (推荐):\033[0m"
-    echo -e "请复制下方链接 -> Clash -> 配置 -> 从 URL 下载"
-    echo -e "\033[4;34m${CLASH_SUB_URL}\033[0m"
     
-    echo -e "\n---------------------------------------------------------"
-    echo -e "\033[32m[方案 B] 手动配置 (如果方案A失败，请复制下方内容到 config.yaml):\033[0m"
-    echo -e "proxies:"
-    echo -e "  - name: ${NODE_NAME}"
-    echo -e "    type: socks5"
-    echo -e "    server: ${PUBLIC_IP}"
-    echo -e "    port: 5555"
-    echo -e "    skip-cert-verify: true"
-    echo -e "    udp: true"
-    echo -e "\033[33m=========================================================\033[0m\n"
+    echo -e "\n\033[32m👇 方法：复制下方虚线中间的内容 -> 新建文件 gemini.yaml -> 拖入 Clash 👇\033[0m"
+    echo -e "\033[36m------------------- 复制开始 (COPY START) -------------------\033[0m"
+    
+    # 直接打印标准 YAML 格式
+    cat <<EOF
+port: 7890
+socks-port: 7891
+allow-lan: false
+mode: rule
+log-level: info
+external-controller: 127.0.0.1:9090
 
+proxies:
+  - name: "Gemini_Unlock"
+    type: socks5
+    server: ${PUBLIC_IP}
+    port: 5555
+    # 如果您的 VPS 有用户名密码，请在 Sing-box inbounds 里配置并在下面添加
+    # username: "xxx"
+    # password: "xxx"
+    skip-cert-verify: true
+    udp: true
+
+proxy-groups:
+  - name: "OpenAI/Gemini"
+    type: select
+    proxies:
+      - "Gemini_Unlock"
+
+rules:
+  - DOMAIN-SUFFIX,google.com,OpenAI/Gemini
+  - DOMAIN-SUFFIX,openai.com,OpenAI/Gemini
+  - DOMAIN-SUFFIX,gemini.google.com,OpenAI/Gemini
+  - DOMAIN-SUFFIX,bard.google.com,OpenAI/Gemini
+  - DOMAIN-KEYWORD,openai,OpenAI/Gemini
+  - DOMAIN-KEYWORD,google,OpenAI/Gemini
+  - MATCH,DIRECT
+EOF
+
+    echo -e "\033[36m------------------- 复制结束 (COPY END) ---------------------\033[0m"
+    echo -e "\n💡 \033[1;37m如果是 Clash Verge / Clash Nyanpasu:\033[0m"
+    echo -e "   直接复制上面内容，在客户端选 '新建配置' -> '从剪贴板导入' 即可！"
 else
     echo "❌ 启动失败，请检查日志。"
 fi
