@@ -17,4 +17,4 @@
 **请使用 Root 用户在 VPS 终端执行以下命令：**
 
 ```bash
-bash <(curl -fsSL [https://raw.githubusercontent.com/makemk/vps-setup/main/install.sh](https://raw.githubusercontent.com/makemk/vps-setup/main/install.sh))
+bash <(curl -fsSL [https://raw.githubusercontent.com/makemk/vps-setup/main/install.sh]
