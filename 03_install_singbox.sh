@@ -1,5 +1,5 @@
 #!/bin/bash
-echo -e "\033[32m---> [3/4] 安装 Sing-box (直装版 + 本地生成 Clash 配置) \033[0m"
+echo -e "\033[32m---> [3/4] 安装 Sing-box (直装版 + 打印原始 SOCKS5 链接) \033[0m"
 
 # 1. 架构判断
 ARCH=$(uname -m)
@@ -9,7 +9,7 @@ case $ARCH in
     *) echo "不支持的架构: $ARCH"; exit 1 ;;
 esac
 
-# 2. 下载 Sing-box
+# 2. 下载 Sing-box (稳定版)
 VERSION="1.10.7"
 URL="https://github.com/SagerNet/sing-box/releases/download/v${VERSION}/sing-box-${VERSION}-linux-${B_ARCH}.tar.gz"
 echo "正在下载 Sing-box v${VERSION}..."
@@ -33,7 +33,7 @@ Restart=on-failure
 WantedBy=multi-user.target
 EOF
 
-# 5. 生成 Sing-box 配置 (VPS 端)
+# 5. 生成配置 (Mixed 端口 5555 -> WARP 40000)
 mkdir -p /etc/sing-box
 cat > /etc/sing-box/config.json <<EOF
 {
@@ -56,59 +56,31 @@ systemctl daemon-reload
 systemctl enable sing-box
 systemctl restart sing-box
 
-# --- 🔥 核心功能：直接生成 Clash YAML 🔥 ---
+# --- 🔥 核心功能：打印原始链接供测试 🔥 ---
 
 if systemctl is-active --quiet sing-box; then
     # 获取公网 IP
     PUBLIC_IP=$(curl -s --max-time 5 https://api.ipify.org)
     [ -z "$PUBLIC_IP" ] && PUBLIC_IP=$(curl -s --max-time 5 https://ifconfig.me)
 
+    # 构造原始 SOCKS5 链接
+    RAW_LINK="socks5://${PUBLIC_IP}:5555#Gemini_VPS"
+
     echo -e "\n\033[33m=========================================================\033[0m"
-    echo -e "\033[33m   🚀 部署成功！请手动复制下方配置 (100% 可用) \033[0m"
+    echo -e "\033[33m   🔗 Sing-box 原始节点链接 \033[0m"
     echo -e "\033[33m=========================================================\033[0m"
     
-    echo -e "\n\033[32m👇 方法：复制下方虚线中间的内容 -> 新建文件 gemini.yaml -> 拖入 Clash 👇\033[0m"
-    echo -e "\033[36m------------------- 复制开始 (COPY START) -------------------\033[0m"
+    echo -e "\n\033[32m[1] 原始 SOCKS5 链接 (复制这个):\033[0m"
+    echo -e "\033[4;34m${RAW_LINK}\033[0m"
+
+    echo -e "\n\033[32m[2] 如何测试是否连通？\033[0m"
+    echo -e "请在您本地电脑的终端 (cmd/powershell/terminal) 运行下面这行命令："
+    echo -e "\033[36mcurl -v -x socks5://${PUBLIC_IP}:5555 https://www.google.com\033[0m"
     
-    # 直接打印标准 YAML 格式
-    cat <<EOF
-port: 7890
-socks-port: 7891
-allow-lan: false
-mode: rule
-log-level: info
-external-controller: 127.0.0.1:9090
+    echo -e "\n\033[32m[3] 如果能看到 '200 OK' 或 HTML 代码，说明节点是通的！\033[0m"
+    echo -e "确认通了之后，再去把上面的链接拿去转换，或者手动填入 Clash。"
+    echo -e "\033[33m=========================================================\033[0m\n"
 
-proxies:
-  - name: "Gemini_Unlock"
-    type: socks5
-    server: ${PUBLIC_IP}
-    port: 5555
-    # 如果您的 VPS 有用户名密码，请在 Sing-box inbounds 里配置并在下面添加
-    # username: "xxx"
-    # password: "xxx"
-    skip-cert-verify: true
-    udp: true
-
-proxy-groups:
-  - name: "OpenAI/Gemini"
-    type: select
-    proxies:
-      - "Gemini_Unlock"
-
-rules:
-  - DOMAIN-SUFFIX,google.com,OpenAI/Gemini
-  - DOMAIN-SUFFIX,openai.com,OpenAI/Gemini
-  - DOMAIN-SUFFIX,gemini.google.com,OpenAI/Gemini
-  - DOMAIN-SUFFIX,bard.google.com,OpenAI/Gemini
-  - DOMAIN-KEYWORD,openai,OpenAI/Gemini
-  - DOMAIN-KEYWORD,google,OpenAI/Gemini
-  - MATCH,DIRECT
-EOF
-
-    echo -e "\033[36m------------------- 复制结束 (COPY END) ---------------------\033[0m"
-    echo -e "\n💡 \033[1;37m如果是 Clash Verge / Clash Nyanpasu:\033[0m"
-    echo -e "   直接复制上面内容，在客户端选 '新建配置' -> '从剪贴板导入' 即可！"
 else
-    echo "❌ 启动失败，请检查日志。"
+    echo "❌ 启动失败，请运行 systemctl status sing-box 查看原因。"
 fi
