@@ -3,7 +3,8 @@
 # =========================================================
 # ⚠️ 请修改下面这行，换成您自己的 GitHub 用户名和仓库名 ⚠️
 # 例如: REPO_URL="https://raw.githubusercontent.com/XingchengWang/vps-setup/main"
-REPO_URL="https://raw.githubusercontent.com/您的用户名/您的仓库名/main"
+#REPO_URL="https://raw.githubusercontent.com/您的用户名/您的仓库名/main"
+REPO_URL="https://raw.githubusercontent.com/makemk/vps-setup/main"
 # =========================================================
 
 # 颜色定义
